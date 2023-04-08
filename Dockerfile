@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM registry.access.redhat.com/ubi8/ubi-minimal
+FROM centos:centos7
 
 LABEL name="Nexus Repository Manager" \
       maintainer="Sonatype <support@sonatype.com>" \
@@ -48,13 +48,22 @@ ENV NEXUS_HOME=${SONATYPE_DIR}/nexus \
     SONATYPE_WORK=${SONATYPE_DIR}/sonatype-work \
     DOCKER_TYPE='rh-docker'
 
-# Install Java & tar
-RUN microdnf update -y \
-    && microdnf --setopt=install_weak_deps=0 --setopt=tsflags=nodocs install -y \
-          java-1.8.0-openjdk-headless tar procps shadow-utils gzip \
-    && microdnf clean all \
+# Install java & setup user
+RUN yum install -y java-1.8.0-openjdk-headless \
+    && yum clean all \
+    && rm -rf /var/cache/yum \
     && groupadd --gid 200 -r nexus \
     && useradd --uid 200 -r nexus -g nexus -s /bin/false -d /opt/sonatype/nexus -c 'Nexus Repository Manager user'
+
+# Red Hat Certified Container commands
+COPY rh-docker /
+RUN usermod -a -G root nexus \
+    && chmod -R 0755 /licenses \
+    && chmod 0755 /help.1 \
+    && chmod 0755 /uid_entrypoint.sh \
+    && chmod 0755 /uid_template.sh \
+    && bash /uid_template.sh \
+    && chmod 0664 /etc/passwd
 
 WORKDIR ${SONATYPE_DIR}
 
@@ -72,13 +81,12 @@ RUN curl -L ${NEXUS_DOWNLOAD_URL} --output nexus-${NEXUS_VERSION}-unix.tar.gz \
 # Removing java memory settings from nexus.vmoptions since now we use INSTALL4J_ADD_VM_PARAMS
 RUN sed -i '/^-Xms/d;/^-Xmx/d;/^-XX:MaxDirectMemorySize/d' $NEXUS_HOME/bin/nexus.vmoptions
 
+# Legacy start script
 RUN echo "#!/bin/bash" >> ${SONATYPE_DIR}/start-nexus-repository-manager.sh \
    && echo "cd /opt/sonatype/nexus" >> ${SONATYPE_DIR}/start-nexus-repository-manager.sh \
    && echo "exec ./bin/nexus run" >> ${SONATYPE_DIR}/start-nexus-repository-manager.sh \
    && chmod a+x ${SONATYPE_DIR}/start-nexus-repository-manager.sh \
    && sed -e '/^nexus-context/ s:$:${NEXUS_CONTEXT}:' -i ${NEXUS_HOME}/etc/nexus-default.properties
-
-RUN microdnf remove -y tar gzip shadow-utils
 
 VOLUME ${NEXUS_DATA}
 
@@ -87,4 +95,5 @@ USER nexus
 
 ENV INSTALL4J_ADD_VM_PARAMS="-Xms2703m -Xmx2703m -XX:MaxDirectMemorySize=2703m -Djava.util.prefs.userRoot=${NEXUS_DATA}/javaprefs"
 
+ENTRYPOINT ["/uid_entrypoint.sh"]
 CMD ["/opt/sonatype/nexus/bin/nexus", "run"]
